@@ -8,6 +8,7 @@ import (
     "encoding/json"
     "time"
     "github.com/docker/go-plugins-helpers/volume"
+    "io/ioutil"
 )
 
 var definitions =  "definitions"
@@ -173,7 +174,22 @@ func (d myDriver) Get(r volume.Request) volume.Response {
 }
 
 func (d myDriver) List(r volume.Request) volume.Response {
-    // files, _ := ioutil.ReadDir(filepath.Join(root, definitions))
+    files, _ := ioutil.ReadDir(filepath.Join(root, definitions))
+    result := make([]*volume.Volume, len(files))
+
+    for _, file := range files {
+        _, name := filepath.Split(file.Name())
+
+        volume := volume.Volume{
+            Name: name,
+            Mountpoint: filepath.Join(root, "mnt", name),
+        }
+        append(result, &volume, )
+    }
+
+    volume.Response{
+        Volumes: result,
+    }
 
     return nil
 }
