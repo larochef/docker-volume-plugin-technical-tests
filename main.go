@@ -1,26 +1,13 @@
 package main
 
 import (
-//    "flag"
-    "fmt"
     "os"
     "path/filepath"
     "github.com/docker/go-plugins-helpers/volume"
 )
 
-// const pluginID = "_simpleFS"
-
-// var (
-    // defaultDir   = "/tmp/volumes" // filepath.Join(volume.DefaultDockerRootDirectory, pluginID)
-    // root *string = flag.String("root", defaultDir, "Storage directory")
-// )
-
-var root string
-
 func main() {
-    // flag.Parse()
-    // root = flag.String("root", defaultDir, "Storage directory")
-    root = "/tmp/volumes"
+    root := "/tmp/volumes"
     // Base directory to store all
     os.MkdirAll(root, 755)
     // Metadata on volumes
@@ -28,5 +15,8 @@ func main() {
     // Data of volumes
     os.Mkdir(filepath.Join(root, "data"), 755)
     os.Mkdir(filepath.Join(root, "mnt"), 755)
-    fmt.Println(volume.NewHandler(newDriver(root)).ServeUnix("root", "simpleFS"))
+    println("Creating server from root dir", root)
+    var driver volume.Driver = newDriver(root)
+    volume.NewHandler(driver).ServeUnix("root", "simpleFS")
+    println("Server created, waiting for requests")
 }

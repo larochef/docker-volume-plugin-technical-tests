@@ -1,13 +1,15 @@
 package main
 
 import (
-    "bytes"
     "os"
     "os/exec"
     "path/filepath"
     "encoding/json"
     "github.com/docker/go-plugins-helpers/volume"
     "io/ioutil"
+    "bufio"
+    "bytes"
+    "strings"
 )
 
 const definitions =  "definitions"
@@ -23,10 +25,10 @@ func (error driverError) Error() string {
 
 
 type metadata struct {
-    name string
-    lo string
-    created string
-    size string
+    Name string
+    Lo string
+    Created string
+    Size string
 }
 
 type myDriver struct {
@@ -40,31 +42,34 @@ func newDriver(path string) myDriver {
 }
 
 func (d myDriver) Create(r volume.Request) volume.Response {
-    _, err := os.Open(filepath.Join(root, definitions, r.Name))
-    if err != nil {
+
+    println("Create volume with name", r.Name)
+
+    _, err := os.Open(filepath.Join(d.path, definitions, r.Name))
+    if err == nil {
         return volume.Response{
-            Err: "Volume with name " + r.Name + " already exists",
+            Err: "Volume definition with name " + r.Name + " already exists",
         }
     }
-    data := filepath.Join(root, data, r.Name)
+    data := filepath.Join(d.path, data, r.Name)
     _, err2 := os.Open(data)
-    if err2 != nil {
+    if err2 == nil {
         return volume.Response{
-            Err: "Volume with name " + r.Name + " already exists",
+            Err: "Volume data with name " + r.Name + " already exists",
         }
     }
 
-    definition, e := os.Create(filepath.Join(root, definitions, r.Name))
+    definition, e := os.Create(filepath.Join(d.path, definitions, r.Name))
     if e != nil {
         return volume.Response{
-            Err: "Unable to create file " + filepath.Join(root, definitions, r.Name) + ": " + e.Error(),
+            Err: "Unable to create file " + filepath.Join(d.path, definitions, r.Name) + ": " + e.Error(),
         }
     }
 
     _, e2 := os.Create(data)
     if e2 != nil {
         return volume.Response{
-            Err: "Unable to create file " + filepath.Join(root, definitions, r.Name) + ": " + e2.Error(),
+            Err: "Unable to create file " + filepath.Join(d.path, definitions, r.Name) + ": " + e2.Error(),
         }
     }
 
@@ -81,12 +86,16 @@ func (d myDriver) Create(r volume.Request) volume.Response {
             Err: "Too many devices are mapped on host, remove some volumes before creating new ones.",
         }
     }
-    createMetadata(definition, &metadata {
-        name: r.Name,
-        lo: lo,
-        created: "",
-        size: size,
+    er := createMetadata(definition, &metadata {
+        Name: r.Name,
+        Lo: lo,
+        Created: "",
+        Size: size,
     })
+
+    if er != nil {
+        println("Error when writing metadata", er.Error())
+    }
 
     return volume.Response{
     }
@@ -96,6 +105,7 @@ func createMetadata(file *os.File, metadata *metadata) error {
     bytes, err := json.Marshal(metadata)
     if(err == nil) {
         file.Write(bytes)
+        file.Close()
     }
     return err
 }
@@ -103,14 +113,23 @@ func createMetadata(file *os.File, metadata *metadata) error {
 func createData(file, name, size string) string {
     exec.Command ("dd", "if=/dev/zero", "of=" + file, "bs=1M", "count=" + size).Run()
     find := exec.Command ("losetup", "-f")
-    find.Run()
-    buf := new(bytes.Buffer)
-    buf.ReadFrom(find.Stdin)
-    lo := buf.String()
-
-    if lo == "" {
+    res, err := find.Output()
+    if err != nil {
+        println("Got error when executing losetup -f", err.Error())
         return ""
     }
+
+    var lo string
+    var e error
+
+    lo, e = bufio.NewReader(bytes.NewReader(res)).ReadString('\n')
+    lo = strings.Replace(lo, "\n", "", 5)
+
+    if e != nil {
+        println("An error occurred", e.Error())
+        return ""
+    }
+    println("Mapping to local loop", lo)
 
     exec.Command ("losetup", lo, file).Run()
     exec.Command ("mkfs", "-t", "ext3", "-m", "1", "-v", lo).Run()
@@ -118,16 +137,22 @@ func createData(file, name, size string) string {
 }
 
 func (d myDriver) Remove(r volume.Request) volume.Response {
-    m, err := loadMetadata(r.Name)
+    println("Removing volume", r.Name)
+
+    m, err := loadMetadata(d.path, r.Name)
     if err != nil {
         return volume.Response{Err: err.Error(),}
     }
-    exec.Command("losetup", "-d", m.lo)
+    // Discard errors that could occur if loop is already dissociated
+    _ = exec.Command("unmount", m.Lo).Run()
+    _ = exec.Command("losetup", "-d", m.Lo).Run()
+    os.Remove(filepath.Join(d.path, data, m.Name))
+    os.Remove(filepath.Join(d.path, definitions, m.Name))
     return volume.Response{}
 }
 
 func (d myDriver) Path(r volume.Request) volume.Response {
-    mntDir := filepath.Join(root, "mnt", r.Name)
+    mntDir := filepath.Join(d.path, "mnt", r.Name)
     return volume.Response{
         Mountpoint: mntDir,
     }
@@ -135,23 +160,23 @@ func (d myDriver) Path(r volume.Request) volume.Response {
 
 func (d myDriver) Mount(r volume.Request) volume.Response {
     name := r.Name
-    m, err := loadMetadata(name)
+    m, err := loadMetadata(d.path, name)
     if err != nil {
         return volume.Response{
             Err: err.Error(),
         }
     }
 
-    mntDir := filepath.Join(root, "mnt", name)
+    mntDir := filepath.Join(d.path, "mnt", name)
     os.Mkdir(mntDir, 755)
-    exec.Command("mount", m.lo, mntDir)
+    exec.Command("mount", m.Lo, mntDir).Run()
     return volume.Response{
         Mountpoint: mntDir,
     }
 }
 
-func loadMetadata(name string) (*metadata, error) {
-    file, err := os.Open(filepath.Join(root, definitions, name))
+func loadMetadata(path, name string) (*metadata, error) {
+    file, err := os.Open(filepath.Join(path, definitions, name))
     if err != nil {
         return nil, driverError{ message: "Unable to find volume " + name + ": " + err.Error()}
     }
@@ -165,14 +190,14 @@ func loadMetadata(name string) (*metadata, error) {
 
 func (d myDriver) Unmount(r volume.Request) volume.Response {
     name := r.Name
-    mntDir := filepath.Join(root, "mnt", name)
+    mntDir := filepath.Join(d.path, "mnt", name)
     exec.Command("umount", mntDir).Run()
     return volume.Response{}
 }
 
 func (d myDriver) Get(r volume.Request) volume.Response {
     name := r.Name
-    mntDir := filepath.Join(root, "mnt", name)
+    mntDir := filepath.Join(d.path, "mnt", name)
 
     return volume.Response{
         Volume: &volume.Volume{
@@ -183,15 +208,14 @@ func (d myDriver) Get(r volume.Request) volume.Response {
 }
 
 func (d myDriver) List(r volume.Request) volume.Response {
-    files, _ := ioutil.ReadDir(filepath.Join(root, definitions))
-    result := make([]*volume.Volume, len(files))
-
+    files, _ := ioutil.ReadDir(filepath.Join(d.path, definitions))
+    result := make([]*volume.Volume, 0)
     for _, file := range files {
         _, name := filepath.Split(file.Name())
 
         volume := volume.Volume{
             Name: name,
-            Mountpoint: filepath.Join(root, "mnt", name),
+            Mountpoint: filepath.Join(d.path, "mnt", name),
         }
         result = append(result, &volume, )
     }
