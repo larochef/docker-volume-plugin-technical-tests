@@ -6,13 +6,21 @@ import (
     "os/exec"
     "path/filepath"
     "encoding/json"
-    "time"
     "github.com/docker/go-plugins-helpers/volume"
     "io/ioutil"
 )
 
-var definitions =  "definitions"
-var data = "data"
+const definitions =  "definitions"
+const data = "data"
+
+type driverError struct {
+    message string
+}
+
+func (error driverError) Error() string {
+    return error.message
+}
+
 
 type metadata struct {
     name string
@@ -35,52 +43,53 @@ func (d myDriver) Create(r volume.Request) volume.Response {
     _, err := os.Open(filepath.Join(root, definitions, r.Name))
     if err != nil {
         return volume.Response{
-            err: "Volume with name " + r.Name + " already exists",
+            Err: "Volume with name " + r.Name + " already exists",
         }
     }
     data := filepath.Join(root, data, r.Name)
     _, err2 := os.Open(data)
     if err2 != nil {
         return volume.Response{
-            err: "Volume with name " + r.Name + " already exists",
+            Err: "Volume with name " + r.Name + " already exists",
         }
     }
 
     definition, e := os.Create(filepath.Join(root, definitions, r.Name))
     if e != nil {
         return volume.Response{
-            err: "Unable to create file " + filepath.Join(root, definitions, r.Name) + ": " + e,
+            Err: "Unable to create file " + filepath.Join(root, definitions, r.Name) + ": " + e.Error(),
         }
     }
 
     _, e2 := os.Create(data)
     if e2 != nil {
         return volume.Response{
-            err: "Unable to create file " + filepath.Join(root, definitions, r.Name) + ": " + e2,
+            Err: "Unable to create file " + filepath.Join(root, definitions, r.Name) + ": " + e2.Error(),
         }
     }
 
     size := r.Options["size"]
     if size == "" {
         return volume.Response{
-            err: "Size parameter is missing",
+            Err: "Size parameter is missing",
         }
     }
-    now := time.Now
+    // now := time.Now
     lo := createData(data, r.Name, size)
     if lo == "" {
         return volume.Response{
-            err: "Too many devices are mapped on host, remove some volumes before creating new ones.",
+            Err: "Too many devices are mapped on host, remove some volumes before creating new ones.",
         }
     }
-    createMetadata(definition, metadata {
+    createMetadata(definition, &metadata {
         name: r.Name,
         lo: lo,
-        created: now,
+        created: "",
         size: size,
     })
 
-    return nil
+    return volume.Response{
+    }
 }
 
 func createMetadata(file *os.File, metadata *metadata) error {
@@ -111,10 +120,10 @@ func createData(file, name, size string) string {
 func (d myDriver) Remove(r volume.Request) volume.Response {
     m, err := loadMetadata(r.Name)
     if err != nil {
-        return volume.Response{err: err,}
+        return volume.Response{Err: err.Error(),}
     }
     exec.Command("losetup", "-d", m.lo)
-    return nil
+    return volume.Response{}
 }
 
 func (d myDriver) Path(r volume.Request) volume.Response {
@@ -129,7 +138,7 @@ func (d myDriver) Mount(r volume.Request) volume.Response {
     m, err := loadMetadata(name)
     if err != nil {
         return volume.Response{
-            err: err,
+            Err: err.Error(),
         }
     }
 
@@ -144,14 +153,14 @@ func (d myDriver) Mount(r volume.Request) volume.Response {
 func loadMetadata(name string) (*metadata, error) {
     file, err := os.Open(filepath.Join(root, definitions, name))
     if err != nil {
-        return _, "Unable to find volume " + name + ": " + err
+        return nil, driverError{ message: "Unable to find volume " + name + ": " + err.Error()}
     }
     m := metadata{}
     err = json.NewDecoder(file).Decode(&m)
     if err != nil {
-        return _, "Unable to read metadata for volume " + name + ": " + err
+        return nil, driverError{ message: "Unable to read metadata for volume " + name + ": " + err.Error()}
     }
-    return m
+    return &m, nil
 }
 
 func (d myDriver) Unmount(r volume.Request) volume.Response {
@@ -166,7 +175,7 @@ func (d myDriver) Get(r volume.Request) volume.Response {
     mntDir := filepath.Join(root, "mnt", name)
 
     return volume.Response{
-        Volume: volume.Volume{
+        Volume: &volume.Volume{
             Name: name,
             Mountpoint: mntDir,
         },
@@ -184,12 +193,10 @@ func (d myDriver) List(r volume.Request) volume.Response {
             Name: name,
             Mountpoint: filepath.Join(root, "mnt", name),
         }
-        append(result, &volume, )
+        result = append(result, &volume, )
     }
 
-    volume.Response{
+    return volume.Response{
         Volumes: result,
     }
-
-    return nil
 }
