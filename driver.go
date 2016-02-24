@@ -196,15 +196,25 @@ func (d myDriver) Unmount(r volume.Request) volume.Response {
 }
 
 func (d myDriver) Get(r volume.Request) volume.Response {
+    println("Inspecting volume", r.Name)
+
     name := r.Name
-    mntDir := filepath.Join(d.path, "mnt", name)
+
+    _, err := loadMetadata(d.path, r.Name)
+
+    if err == nil {
+        return volume.Response{
+            Volume: &volume.Volume{
+                Name: name,
+                Mountpoint: filepath.Join(d.path, "mnt", name),
+            },
+        }
+    }
 
     return volume.Response{
-        Volume: &volume.Volume{
-            Name: name,
-            Mountpoint: mntDir,
-        },
+        Err: "Volume " + name + " doesn't exist",
     }
+
 }
 
 func (d myDriver) List(r volume.Request) volume.Response {
