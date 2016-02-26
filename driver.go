@@ -32,12 +32,14 @@ type metadata struct {
 }
 
 type myDriver struct {
-    path       string
+    path        string
+    exposedPath string
 }
 
-func newDriver(path string) myDriver {
+func newDriver(path, exposedPath string) myDriver {
     return myDriver{
         path: path,
+        exposedPath: exposedPath,
     }
 }
 
@@ -152,7 +154,15 @@ func (d myDriver) Remove(r volume.Request) volume.Response {
 }
 
 func (d myDriver) Path(r volume.Request) volume.Response {
-    mntDir := filepath.Join(d.path, "mnt", r.Name)
+    _, err := loadMetadata(d.path, r.Name)
+
+    if err != nil {
+        return volume.Response{
+            Err: "Unable to find volume " + r.Name,
+        }
+    }
+
+    mntDir := filepath.Join(d.exposedPath, "mnt", r.Name)
     return volume.Response{
         Mountpoint: mntDir,
     }
@@ -168,10 +178,11 @@ func (d myDriver) Mount(r volume.Request) volume.Response {
     }
 
     mntDir := filepath.Join(d.path, "mnt", name)
+    exposedPath := filepath.Join(d.exposedPath, "mnt", name)
     os.Mkdir(mntDir, 755)
     exec.Command("mount", m.Lo, mntDir).Run()
     return volume.Response{
-        Mountpoint: mntDir,
+        Mountpoint: exposedPath,
     }
 }
 
@@ -206,7 +217,7 @@ func (d myDriver) Get(r volume.Request) volume.Response {
         return volume.Response{
             Volume: &volume.Volume{
                 Name: name,
-                Mountpoint: filepath.Join(d.path, "mnt", name),
+                Mountpoint: filepath.Join(d.exposedPath, "mnt", name),
             },
         }
     }
@@ -225,7 +236,7 @@ func (d myDriver) List(r volume.Request) volume.Response {
 
         volume := volume.Volume{
             Name: name,
-            Mountpoint: filepath.Join(d.path, "mnt", name),
+            Mountpoint: filepath.Join(d.exposedPath, "mnt", name),
         }
         result = append(result, &volume, )
     }

@@ -14,6 +14,7 @@ func main() {
     defer os.Remove("/run/docker/" + pluginName)
 
     root :=  flag.String("root", defaultPath, "Simple FS storage location")
+    path :=  flag.String("path", filepath.Join(defaultPath, "mnt"), "Simple FS storage location")
     flag.Parse()
     // Base directory to store all
     os.MkdirAll(*root, 0755)
@@ -23,6 +24,6 @@ func main() {
     os.Mkdir(filepath.Join(*root, "data"), 0755)
     os.Mkdir(filepath.Join(*root, "mnt"), 0755)
     println("Creating server from root dir", *root)
-    var driver volume.Driver = newDriver(*root)
+    var driver volume.Driver = newDriver(*root, *path)
     volume.NewHandler(driver).ServeUnix("root", pluginName)
 }
